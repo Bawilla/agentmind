@@ -17,8 +17,10 @@ import glob
 import math
 import statistics
 import re
+import time
 from typing import TypedDict, Literal
 
+import groq as _groq
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -27,7 +29,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import StateGraph, END
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 load_dotenv()
 
@@ -91,6 +93,23 @@ LLM = ChatGroq(model=GROQ_MODEL, temperature=0)
 
 
 # ---------------------------------------------------------------------------
+# Rate-limit-safe LLM helper
+# ---------------------------------------------------------------------------
+def _llm_invoke(messages: list):
+    """Invoke LLM with exponential backoff on RateLimitError (max 3 retries)."""
+    for attempt in range(3):
+        try:
+            time.sleep(5)
+            return LLM.invoke(messages)
+        except _groq.RateLimitError:
+            if attempt == 2:
+                raise
+            wait = 10 * (2 ** attempt)
+            print(f"  [RateLimit] Groq rate limit hit — waiting {wait}s …")
+            time.sleep(wait)
+
+
+# ---------------------------------------------------------------------------
 # Node 1 — agent: decides which tool to use
 # ---------------------------------------------------------------------------
 TOOL_SELECTION_PROMPT = """You are a routing assistant. Given a question, decide which tool to use:
@@ -117,7 +136,7 @@ def agent(state: AgentState) -> AgentState:
         SystemMessage(content=TOOL_SELECTION_PROMPT),
         HumanMessage(content=question),
     ]
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     text = response.content.strip()
 
     # Parse TOOL and REASON lines
@@ -170,9 +189,9 @@ def web_search(state: AgentState) -> AgentState:
     print(f"[Node: web_search] Searching DuckDuckGo for: {question!r}")
 
     results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(question, max_results=3):
-            results.append(r)
+    ddgs = DDGS()
+    for r in ddgs.text(question, max_results=3):
+        results.append(r)
 
     if results:
         parts = []
@@ -276,7 +295,7 @@ def answer(state: AgentState) -> AgentState:
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_content),
     ]
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     ans = response.content.strip()
     print(f"[Node: answer] Answer generated (tool used: {tool_used}).")
     return {**state, "answer": ans}

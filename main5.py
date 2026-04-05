@@ -24,6 +24,7 @@ import re
 import time
 from typing import TypedDict, List
 
+import groq as _groq
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -107,6 +108,23 @@ LLM = ChatGroq(model=GROQ_MODEL, temperature=0)
 
 
 # ---------------------------------------------------------------------------
+# Rate-limit-safe LLM helper
+# ---------------------------------------------------------------------------
+def _llm_invoke(messages: list):
+    """Invoke LLM with exponential backoff on RateLimitError (max 3 retries)."""
+    for attempt in range(3):
+        try:
+            time.sleep(5)
+            return LLM.invoke(messages)
+        except _groq.RateLimitError:
+            if attempt == 2:
+                raise
+            wait = 10 * (2 ** attempt)
+            print(f"  [RateLimit] Groq rate limit hit — waiting {wait}s …")
+            time.sleep(wait)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _parse_float(text: str, key: str) -> float:
@@ -179,8 +197,7 @@ def generate(state: AgentState) -> AgentState:
     user_content = f"Context:\n{context}\n\nQuestion: {question}"
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
-    time.sleep(2)
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     ans = response.content.strip()
 
     preview = ans[:120].replace("\n", " ")
@@ -216,8 +233,7 @@ def reflect_retrieval(state: AgentState) -> AgentState:
         SystemMessage(content=REFLECT_RETRIEVAL_PROMPT),
         HumanMessage(content=f"Question: {question}\n\nRetrieved chunks:\n{context[:2000]}"),
     ]
-    time.sleep(2)
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     text = response.content.strip()
 
     score  = "partial"   # safe default
@@ -279,7 +295,7 @@ def re_retrieve(state: AgentState) -> AgentState:
         SystemMessage(content=REWRITE_PROMPT),
         HumanMessage(content=f"Original: {original}\nCurrent: {current}"),
     ]
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     new_q = response.content.strip().strip('"').strip("'")
     print(f"  Rewritten to  : {new_q!r}")
 
@@ -340,8 +356,7 @@ def reflect_answer(state: AgentState) -> AgentState:
             )
         ),
     ]
-    time.sleep(2)
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     text = response.content.strip()
 
     g = _parse_float(text, "groundedness")
@@ -418,8 +433,7 @@ def regenerate(state: AgentState) -> AgentState:
     )
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
-    time.sleep(2)
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     new_ans = response.content.strip()
 
     preview = new_ans[:120].replace("\n", " ")

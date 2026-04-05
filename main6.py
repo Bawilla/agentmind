@@ -23,6 +23,7 @@ from typing import TypedDict, List
 # tracing.py must be imported first — it calls load_dotenv()
 from tracing import init_tracing, trace_step, get_run_url
 
+import groq as _groq
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -30,7 +31,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from langsmith import traceable
 
 # Initialise LangSmith at startup
@@ -102,15 +103,24 @@ LLM = ChatGroq(model=GROQ_MODEL, temperature=0)
 # ---------------------------------------------------------------------------
 @traceable(name="llm_call", run_type="llm")
 def _traced_llm_call(messages: list, node_name: str) -> str:
-    """Wraps every LLM invoke so LangSmith captures prompt + response."""
-    t0 = time.perf_counter()
-    response = LLM.invoke(messages)
-    latency_ms = int((time.perf_counter() - t0) * 1000)
-    content = response.content.strip()
-    # Rough token estimate (words × 1.3)
-    token_est = int(sum(len(m.content.split()) for m in messages) * 1.3)
-    print(f"  [LLM] {node_name} — {latency_ms}ms, ~{token_est} tokens in")
-    return content
+    """Wraps every LLM invoke so LangSmith captures prompt + response.
+    Includes 5s pre-call sleep and exponential backoff on RateLimitError."""
+    for attempt in range(3):
+        try:
+            t0 = time.perf_counter()
+            time.sleep(5)
+            response = LLM.invoke(messages)
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            content = response.content.strip()
+            token_est = int(sum(len(m.content.split()) for m in messages) * 1.3)
+            print(f"  [LLM] {node_name} — {latency_ms}ms, ~{token_est} tokens in")
+            return content
+        except _groq.RateLimitError:
+            if attempt == 2:
+                raise
+            wait = 10 * (2 ** attempt)
+            print(f"  [RateLimit] Groq rate limit hit — waiting {wait}s …")
+            time.sleep(wait)
 
 
 # ---------------------------------------------------------------------------
@@ -238,9 +248,9 @@ def web_search(state: AgentState) -> AgentState:
 
     results = []
     try:
-        with DDGS() as ddgs:
-            for r in ddgs.text(question, max_results=3):
-                results.append(r)
+        ddgs = DDGS()
+        for r in ddgs.text(question, max_results=3):
+            results.append(r)
     except Exception as exc:
         print(f"  DuckDuckGo error: {exc}")
 

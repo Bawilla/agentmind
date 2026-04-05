@@ -12,8 +12,10 @@ Conditional edge: decide → retrieve → answer  (if needs_retrieval)
 
 import os
 import glob
+import time
 from typing import TypedDict
 
+import groq as _groq
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -85,6 +87,23 @@ LLM = ChatGroq(model=GROQ_MODEL, temperature=0)
 
 
 # ---------------------------------------------------------------------------
+# Rate-limit-safe LLM helper
+# ---------------------------------------------------------------------------
+def _llm_invoke(messages: list):
+    """Invoke LLM with exponential backoff on RateLimitError (max 3 retries)."""
+    for attempt in range(3):
+        try:
+            time.sleep(5)
+            return LLM.invoke(messages)
+        except _groq.RateLimitError:
+            if attempt == 2:
+                raise
+            wait = 10 * (2 ** attempt)
+            print(f"  [RateLimit] Groq rate limit hit — waiting {wait}s …")
+            time.sleep(wait)
+
+
+# ---------------------------------------------------------------------------
 # Node 1 — decide
 # ---------------------------------------------------------------------------
 def decide(state: AgentState) -> AgentState:
@@ -103,7 +122,7 @@ def decide(state: AgentState) -> AgentState:
         SystemMessage(content=system_prompt),
         HumanMessage(content=question),
     ]
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     verdict = response.content.strip().upper()
     needs = verdict.startswith("YES")
 
@@ -157,7 +176,7 @@ def answer(state: AgentState) -> AgentState:
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_content),
     ]
-    response = LLM.invoke(messages)
+    response = _llm_invoke(messages)
     ans = response.content.strip()
     mode = "with retrieved context" if context else "from general knowledge"
     print(f"[Node 3 — answer]   Answered {mode}.")
