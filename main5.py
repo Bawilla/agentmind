@@ -21,6 +21,7 @@ Nodes:
 import os
 import glob
 import re
+import time
 from typing import TypedDict, List
 
 from dotenv import load_dotenv
@@ -40,7 +41,7 @@ load_dotenv()
 PAPERS_DIR       = os.path.join(os.path.dirname(__file__), "papers")
 CHROMA_DIR       = os.path.join(os.path.dirname(__file__), "chroma_db_main5")
 EMBED_MODEL      = "all-MiniLM-L6-v2"
-GROQ_MODEL       = "llama-3.1-8b-instant"
+GROQ_MODEL       = "llama3-8b-8192"
 TOP_K            = 5
 MAX_RETRIEVAL_RETRIES  = 2   # max times we re-retrieve on unsupported
 MAX_REGEN_ATTEMPTS     = 2   # max regeneration passes
@@ -178,6 +179,7 @@ def generate(state: AgentState) -> AgentState:
     user_content = f"Context:\n{context}\n\nQuestion: {question}"
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
+    time.sleep(2)
     response = LLM.invoke(messages)
     ans = response.content.strip()
 
@@ -214,6 +216,7 @@ def reflect_retrieval(state: AgentState) -> AgentState:
         SystemMessage(content=REFLECT_RETRIEVAL_PROMPT),
         HumanMessage(content=f"Question: {question}\n\nRetrieved chunks:\n{context[:2000]}"),
     ]
+    time.sleep(2)
     response = LLM.invoke(messages)
     text = response.content.strip()
 
@@ -337,6 +340,7 @@ def reflect_answer(state: AgentState) -> AgentState:
             )
         ),
     ]
+    time.sleep(2)
     response = LLM.invoke(messages)
     text = response.content.strip()
 
@@ -414,6 +418,7 @@ def regenerate(state: AgentState) -> AgentState:
     )
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
+    time.sleep(2)
     response = LLM.invoke(messages)
     new_ans = response.content.strip()
 
