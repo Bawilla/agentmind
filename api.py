@@ -4,7 +4,8 @@ AgentMind — api.py
 FastAPI wrapper around the Day 4 Corrective RAG (CRAG) pipeline.
 
 Endpoints:
-  POST   /ask                    — run full CRAG pipeline
+  POST   /ask                    — run full CRAG pipeline (blocking)
+  POST   /ask/stream             — run CRAG pipeline with SSE token streaming
   GET    /history/{session_id}   — retrieve session exchange history
   DELETE /history/{session_id}   — clear session history
   GET    /health                 — liveness check
@@ -15,15 +16,17 @@ import os
 import glob
 import time
 import uuid
+import json
 import tempfile
 from contextlib import asynccontextmanager
-from typing import TypedDict, List, Dict, Optional
+from typing import TypedDict, List, Dict, Optional, Generator
 
 import groq as _groq
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -446,6 +449,193 @@ def ask(req: AskRequest):
         chunk_grades=chunk_grades,
         session_id=session_id,
         latency_ms=latency_ms,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /ask/stream  (Server-Sent Events)
+# ---------------------------------------------------------------------------
+def _sse(data: dict) -> str:
+    """Format a dict as a single SSE line."""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+def _stream_crag_events(question: str, session_id: str) -> Generator[str, None, None]:
+    """
+    Sync generator that runs the full CRAG pipeline and yields SSE events:
+      {"type": "status",  "message": "..."}
+      {"type": "token",   "content": "..."}
+      {"type": "done",    "sources": [...], "tool_used": "...",
+                          "chunk_grades": {...}, "latency_ms": ...}
+    """
+    t0 = time.perf_counter()
+    original_question = question
+    current_question  = question
+    rewrite_count     = 0
+    chunks:  List[str] = []
+    sources: List[str] = []
+    pages:   List[str] = []
+    grades:  List[str] = []
+    web_context        = ""
+
+    # ── Retrieval / grading loop (handles query rewrites) ──────────────────
+    while True:
+        yield _sse({"type": "status", "message": f"Retrieving chunks for: {current_question!r}"})
+        results = VECTORSTORE.similarity_search(current_question, k=TOP_K)
+        chunks  = [doc.page_content.strip() for doc in results]
+        sources = [os.path.basename(doc.metadata.get("source", "unknown")) for doc in results]
+        pages   = [str(doc.metadata.get("page", "?")) for doc in results]
+        yield _sse({"type": "status", "message": f"Retrieved {len(chunks)} chunks"})
+
+        # Grade each chunk
+        yield _sse({"type": "status", "message": "Grading chunks..."})
+        grades = []
+        for i, (chunk, src) in enumerate(zip(chunks, sources), 1):
+            yield _sse({"type": "status", "message": f"Grading chunk {i}/{len(chunks)} [{src}]..."})
+            messages = [
+                SystemMessage(content=GRADE_PROMPT),
+                HumanMessage(content=f"Question: {current_question}\n\nChunk:\n{chunk[:600]}"),
+            ]
+            response = _llm_invoke(messages)
+            raw   = response.content.strip().lower()
+            grade = ("irrelevant" if "irrelevant" in raw
+                     else "ambiguous" if "ambiguous" in raw
+                     else "relevant")
+            grades.append(grade)
+            yield _sse({"type": "status", "message": f"Chunk {i} graded: {grade.upper()}"})
+
+        # Routing decision
+        has_irrelevant = any(g == "irrelevant" for g in grades)
+        all_ambiguous  = all(g == "ambiguous"  for g in grades)
+
+        if all_ambiguous and rewrite_count < MAX_REWRITES:
+            yield _sse({"type": "status",
+                        "message": f"All chunks ambiguous — rewriting query (attempt {rewrite_count + 1})..."})
+            messages = [
+                SystemMessage(content=REWRITE_PROMPT),
+                HumanMessage(content=f"Original: {original_question}\nCurrent: {current_question}"),
+            ]
+            response = _llm_invoke(messages)
+            current_question = response.content.strip().strip('"').strip("'")
+            rewrite_count   += 1
+            yield _sse({"type": "status", "message": f"Query rewritten to: {current_question!r}"})
+            continue   # loop back to retrieve
+
+        # Web search if needed
+        web_context = ""
+        if has_irrelevant or (all_ambiguous and rewrite_count >= MAX_REWRITES):
+            yield _sse({"type": "status", "message": "Searching web (DuckDuckGo)..."})
+            web_results: List[dict] = []
+            try:
+                ddgs = DDGS()
+                for r in ddgs.text(original_question, max_results=3):
+                    web_results.append(r)
+            except Exception as exc:
+                yield _sse({"type": "status", "message": f"Web search error: {exc}"})
+            if web_results:
+                web_context = "\n\n".join(
+                    f"[Web {i}] {r.get('title','')}\n{r.get('body','')}"
+                    for i, r in enumerate(web_results, 1)
+                )
+                yield _sse({"type": "status", "message": f"Got {len(web_results)} web results"})
+            else:
+                yield _sse({"type": "status", "message": "No web results returned"})
+
+        break   # exit retrieval/grading loop
+
+    # ── Build combined context ─────────────────────────────────────────────
+    kept_parts = [
+        f"[Paper chunk {i} | {src}]\n{chunk.strip()}"
+        for i, (chunk, src, grade) in enumerate(zip(chunks, sources, grades), 1)
+        if grade != "irrelevant"
+    ]
+    rag_context = "\n\n".join(kept_parts)
+    sections = []
+    if rag_context:
+        sections.append("=== Retrieved Paper Context ===\n" + rag_context)
+    if web_context:
+        sections.append("=== Web Search Results ===\n" + web_context)
+    combined = "\n\n".join(sections)
+
+    # ── Stream answer tokens ───────────────────────────────────────────────
+    yield _sse({"type": "status", "message": "Generating answer..."})
+
+    if combined:
+        system_prompt = (
+            "You are a helpful research assistant. "
+            "Answer the question using the provided context. "
+            "Integrate web results with paper excerpts where both are present. "
+            "Be concise and accurate."
+        )
+        user_content = f"Context:\n{combined}\n\nQuestion: {original_question}"
+    else:
+        system_prompt = "You are a helpful assistant. Answer concisely from general knowledge."
+        user_content  = original_question
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_content)]
+
+    full_answer = ""
+    time.sleep(5)   # rate-limit pre-call delay
+    try:
+        for chunk in LLM.stream(messages):
+            token = chunk.content
+            if token:
+                full_answer += token
+                yield _sse({"type": "token", "content": token})
+    except _groq.RateLimitError:
+        # Fall back to invoke with backoff
+        response = _llm_invoke(messages)
+        full_answer = response.content.strip()
+        for word in full_answer.split(" "):
+            yield _sse({"type": "token", "content": word + " "})
+
+    # ── Persist session ────────────────────────────────────────────────────
+    SESSION_STORE.setdefault(session_id, []).append({
+        "question": original_question,
+        "answer":   full_answer,
+    })
+
+    # ── Done event ─────────────────────────────────────────────────────────
+    final_sources = list(dict.fromkeys(
+        f"{src}:{pg}"
+        for src, pg, grade in zip(sources, pages, grades)
+        if grade != "irrelevant"
+    ))
+    has_rag   = any(g != "irrelevant" for g in grades)
+    has_web   = bool(web_context)
+    tool_used = "both" if (has_rag and has_web) else "web_search" if has_web else "retrieval"
+
+    yield _sse({
+        "type":        "done",
+        "sources":     final_sources,
+        "tool_used":   tool_used,
+        "chunk_grades": {
+            "relevant":   grades.count("relevant"),
+            "irrelevant": grades.count("irrelevant"),
+            "ambiguous":  grades.count("ambiguous"),
+        },
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+    })
+
+
+@app.post("/ask/stream")
+def ask_stream(req: AskRequest):
+    """
+    Run the full CRAG pipeline and stream the response as Server-Sent Events.
+
+    Event types:
+      {"type": "status",  "message": "..."}        — pipeline progress
+      {"type": "token",   "content": "..."}         — answer token
+      {"type": "done",    "sources": [...], ...}    — final metadata
+    """
+    session_id = req.session_id or str(uuid.uuid4())
+    return StreamingResponse(
+        _stream_crag_events(req.question, session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

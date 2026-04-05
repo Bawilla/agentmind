@@ -128,6 +128,58 @@ curl -X POST http://localhost:8000/upload \
 }
 ```
 
+## Day 8 — Streaming Responses
+
+### Terminal streaming (`main8.py`)
+
+```bash
+python main8.py
+```
+
+Shows a live spinner during retrieval and chunk-grading, then streams the final
+answer token-by-token as it arrives from the LLM:
+
+```
+  ✓  Retrieved 5 chunks
+  ✓  Chunk 1 [corrective_rag.pdf] → RELEVANT
+  ✓  Chunk 2 [rag_original.pdf] → IRRELEVANT
+  ...
+  ── Streaming Answer ─────────────────────────────────────────
+  Based on the provided context, CRAG handles irrelevant chunks by ...
+```
+
+### SSE API endpoint (`POST /ask/stream`)
+
+```bash
+curl -X POST http://localhost:8000/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How does CRAG handle irrelevant chunks?", "session_id": "s1"}'
+```
+
+Streams [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events):
+
+```
+data: {"type": "status",  "message": "Retrieving chunks for: ..."}
+data: {"type": "status",  "message": "Grading chunk 1/5 [corrective_rag.pdf]..."}
+data: {"type": "status",  "message": "Chunk 1 graded: RELEVANT"}
+data: {"type": "status",  "message": "Searching web (DuckDuckGo)..."}
+data: {"type": "status",  "message": "Generating answer..."}
+data: {"type": "token",   "content": "Based"}
+data: {"type": "token",   "content": " on"}
+...
+data: {"type": "done", "sources": ["corrective_rag.pdf:0"], "tool_used": "both",
+       "chunk_grades": {"relevant": 1, "irrelevant": 4, "ambiguous": 0},
+       "latency_ms": 33928.0}
+```
+
+Event types:
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `status` | `message` | Pipeline progress update |
+| `token` | `content` | One answer token |
+| `done` | `sources`, `tool_used`, `chunk_grades`, `latency_ms` | Final metadata |
+
 ## Author
 
 **Jamson Batista**
