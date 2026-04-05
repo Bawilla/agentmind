@@ -180,6 +180,92 @@ Event types:
 | `token` | `content` | One answer token |
 | `done` | `sources`, `tool_used`, `chunk_grades`, `latency_ms` | Final metadata |
 
+## Day 9 — Docker Containerization
+
+### Quick start
+
+```bash
+# 1. Build and start (first run builds the image — takes ~5 min for torch/transformers)
+docker-compose up --build
+
+# 2. Subsequent starts (image already built)
+docker-compose up -d
+
+# 3. Stop
+docker-compose down
+```
+
+### Run with plain Docker (no compose)
+
+```bash
+docker build -t agentmind .
+
+docker run -p 8000:8000 \
+  --env-file .env \
+  -v $(pwd)/papers:/app/papers:ro \
+  -v $(pwd)/chroma_db_main4:/app/chroma_db_main4 \
+  agentmind
+```
+
+### Pull from DockerHub (no build needed)
+
+```bash
+docker pull jamsonujang/agentmind:latest
+
+docker run -p 8000:8000 \
+  --env-file .env \
+  -v $(pwd)/papers:/app/papers:ro \
+  -v $(pwd)/chroma_db_main4:/app/chroma_db_main4 \
+  jamsonujang/agentmind:latest
+```
+
+### Required `.env` file
+
+Create a `.env` file in the project root before starting the container:
+
+```env
+# Required
+GROQ_API_KEY=your_groq_api_key_here
+
+# Optional — enables LangSmith tracing (Day 6)
+LANGCHAIN_API_KEY=your_langsmith_key
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_PROJECT=agentmind
+```
+
+### Volume mounts
+
+| Host path | Container path | Purpose |
+|-----------|---------------|---------|
+| `./papers` | `/app/papers` | Source PDFs (read-only) |
+| `./chroma_db_main4` | `/app/chroma_db_main4` | ChromaDB index (persists across restarts) |
+
+### Test the container
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Ask a question
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is RAG?", "session_id": "docker_test"}'
+
+# Streaming
+curl -X POST http://localhost:8000/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How does CRAG work?", "session_id": "docker_test"}'
+```
+
+### Docker files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage build — `python:3.11-slim` base |
+| `docker-compose.yml` | One-command start with volumes + env vars |
+| `.dockerignore` | Excludes `venv/`, `chroma_db*/`, `.env`, day scripts |
+| `requirements.txt` | Pinned deps from `pip freeze` (Windows-only packages removed) |
+
 ## Author
 
 **Jamson Batista**

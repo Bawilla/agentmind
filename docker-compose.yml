@@ -1,0 +1,40 @@
+# AgentMind — Day 9: docker-compose
+#
+# Usage:
+#   docker-compose up --build      # first run — builds image and starts
+#   docker-compose up -d           # detached
+#   docker-compose down            # stop and remove containers
+#   docker-compose logs -f         # tail logs
+#
+# Requires a .env file in the same directory with at minimum:
+#   GROQ_API_KEY=your_key_here
+#   LANGCHAIN_API_KEY=...          # optional — only needed for LangSmith tracing
+#   LANGCHAIN_TRACING_V2=true      # optional
+#   LANGCHAIN_PROJECT=agentmind    # optional
+
+version: "3.9"
+
+services:
+  agentmind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentmind:latest
+    container_name: agentmind_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # PDFs — add new papers here without rebuilding the image
+      - ./papers:/app/papers:ro
+      # ChromaDB index — persists across container restarts
+      - ./chroma_db_main4:/app/chroma_db_main4
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
