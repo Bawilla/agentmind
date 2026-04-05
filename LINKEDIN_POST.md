@@ -45,6 +45,27 @@ Any score below 0.7 triggers regeneration (max 2×). Real results from live runs
 
 🗓 **Day 10** — Polish. Architecture diagram, professional docs, this post.
 
+🗓 **Day 11** — **Live AWS deployment.** Pushed the Docker image to AWS ECR and deployed on ECS Fargate (eu-central-1). The API is live at **http://35.157.189.76:8000**.
+
+Try it now:
+```bash
+curl -X POST http://35.157.189.76:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is corrective RAG?","session_id":"demo"}'
+```
+
+Example response:
+```json
+{
+  "answer": "Corrective RAG improves retrieval quality by grading each retrieved chunk as relevant, irrelevant, or ambiguous. Irrelevant chunks trigger a web search fallback; all-ambiguous results trigger query rewriting and fresh retrieval — ensuring the final answer is always grounded in high-quality context.",
+  "sources": ["corrective_rag.pdf:0", "rag_survey.pdf:3"],
+  "tool_used": "retrieval",
+  "chunk_grades": {"relevant": 3, "irrelevant": 1, "ambiguous": 1},
+  "session_id": "demo",
+  "latency_ms": 1847.3
+}
+```
+
 ---
 
 **Stack:** LangGraph · Groq (llama-3.1-8b-instant) · ChromaDB · HuggingFace embeddings · FastAPI · DuckDuckGo · LangSmith · Docker

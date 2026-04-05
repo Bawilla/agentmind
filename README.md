@@ -1,5 +1,17 @@
 # AgentMind — Production Agentic RAG with LangGraph
 
+## Live Demo
+
+Base URL: http://35.157.189.76:8000
+
+```bash
+curl http://35.157.189.76:8000/health
+
+curl -X POST http://35.157.189.76:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is corrective RAG?","session_id":"demo"}'
+```
+
 AgentMind is a production-grade agentic RAG system that **reasons before retrieving** — it decides what to look up, judges whether the retrieved context is good enough, and loops back to refine its search if it isn't. Built over 10 days as a structured engineering challenge, it progresses from a minimal 3-node state machine to a fully Dockerized REST API with streaming, LangSmith observability, and two distinct RAG strategies: Corrective RAG (CRAG) and Self-RAG with reflection scoring.
 
 ## Architecture
