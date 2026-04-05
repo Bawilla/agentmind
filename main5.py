@@ -41,7 +41,7 @@ load_dotenv()
 PAPERS_DIR       = os.path.join(os.path.dirname(__file__), "papers")
 CHROMA_DIR       = os.path.join(os.path.dirname(__file__), "chroma_db_main5")
 EMBED_MODEL      = "all-MiniLM-L6-v2"
-GROQ_MODEL       = "llama3-8b-8192"
+GROQ_MODEL       = "llama-3.1-8b-instant"
 TOP_K            = 5
 MAX_RETRIEVAL_RETRIES  = 2   # max times we re-retrieve on unsupported
 MAX_REGEN_ATTEMPTS     = 2   # max regeneration passes
