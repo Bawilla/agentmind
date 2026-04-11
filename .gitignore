@@ -28,3 +28,7 @@ monitoring/reports/
 
 # Claude Code session files
 .claude/
+
+# ECS task definition contains secrets — never commit
+task-definition.json
+trust-policy.json
