@@ -17,3 +17,14 @@ __pycache__/
 
 # Docker
 .dockerignore
+
+# MLflow local tracking database and run artifacts
+mlflow.db
+mlruns/
+
+# Evidently runtime data (generated, not source code)
+monitoring/query_log.jsonl
+monitoring/reports/
+
+# Claude Code session files
+.claude/

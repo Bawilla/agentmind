@@ -112,7 +112,6 @@ sympy==1.14.0
 tenacity==9.1.4
 threadpoolctl==3.6.0
 tokenizers==0.22.2
-torch==2.11.0
 tqdm==4.67.3
 transformers==5.5.0
 typer==0.24.1
@@ -129,3 +128,11 @@ xxhash==3.6.0
 yarl==1.23.0
 zipp==3.23.0
 zstandard==0.25.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+
+# MLOps
+mlflow
+evidently
+sagemaker
+boto3

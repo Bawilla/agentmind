@@ -286,6 +286,97 @@ curl -X POST http://localhost:8000/upload \
   -F "file=@papers/my_paper.pdf"
 ```
 
+---
+
+## MLOps Pipeline
+
+### CI/CD — GitHub Actions
+
+Every push to `main` triggers a 4-stage pipeline:
+
+```
+push to main
+     │
+     ▼
+┌─────────┐    ┌─────────┐    ┌────────────┐    ┌──────────────┐
+│  test   │───►│  build  │───►│  push ECR  │───►│ deploy ECS   │
+│ pytest  │    │ docker  │    │  :sha tag  │    │ force-new-   │
+│ 5 tests │    │ build   │    │  :latest   │    │ deployment   │
+└─────────┘    └─────────┘    └────────────┘    └──────────────┘
+```
+
+**Required GitHub Secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `AWS_ACCESS_KEY_ID` | IAM user access key |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
+| `AWS_REGION` | `eu-central-1` |
+
+**Pipeline file**: `.github/workflows/deploy.yml`
+
+---
+
+### MLflow Experiment Tracking
+
+Every `/ask` request is logged as an MLflow run under the `agentmind-rag` experiment.
+Runs are saved locally to `./mlruns/`.
+
+**Logged metrics per request**: `latency_ms`, `chunks_retrieved`, `chunks_relevant`,
+`chunks_irrelevant`, `chunks_ambiguous`, `sources_count`, `answer_length`,
+`tool_used_retrieval`, `tool_used_web`.
+
+**View experiments**:
+```bash
+python view_experiments.py
+# Opens http://localhost:5001
+```
+
+**Tracker file**: `mlflow_tracker.py`
+
+---
+
+### Evidently AI Drift Monitoring
+
+All queries are appended to `monitoring/query_log.jsonl`. Every 50 queries,
+an Evidently `DataDriftPreset` report is generated automatically.
+
+**Monitored features**: `question_length`, `answer_length`, `latency_ms`
+
+**Generate a manual drift report**:
+```bash
+python -m monitoring.drift_monitor
+# Saves → monitoring/reports/drift_report_{timestamp}.html
+```
+
+**Terminal dashboard** (today's stats, tool breakdown, top topics):
+```bash
+python monitoring/dashboard.py
+```
+
+**Alert threshold**: drift score > 0.3 prints a console alert.
+
+---
+
+### AWS SageMaker Experiment Tracking
+
+Each `/ask` call is logged as a SageMaker Run under the `agentmind-production` experiment,
+visible in AWS SageMaker Studio.
+
+**Logged per request**: `model_name`, `retrieval_top_k`, `latency_ms`,
+`chunks_retrieved`, `answer_relevancy`.
+
+**View in Studio**: SageMaker Studio → Experiments → `agentmind-production`
+
+**Or via CLI**:
+```bash
+aws sagemaker list-experiments --region eu-central-1
+```
+
+**Tracker file**: `sagemaker_tracker.py`
+
+---
+
 ## Author
 
 **Jamson Ujang** — MSc Particle Physics | Data Scientist  

@@ -29,6 +29,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import mlflow_tracker
+import sagemaker_tracker
+from monitoring import drift_monitor
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -358,6 +362,8 @@ async def lifespan(app: FastAPI):
     VECTORSTORE = _load_or_build_vectorstore()
     LLM         = ChatGroq(model=GROQ_MODEL, temperature=0)
     CRAG_APP    = _build_graph()
+    mlflow_tracker.init()
+    sagemaker_tracker.init()
     print("[Startup] Ready.\n")
     yield
     print("[Shutdown] AgentMind API shutting down.")
@@ -442,7 +448,7 @@ def ask(req: AskRequest):
         "answer":   final["answer"],
     })
 
-    return AskResponse(
+    response = AskResponse(
         answer=final["answer"],
         sources=sources,
         tool_used=tool_used,
@@ -450,6 +456,44 @@ def ask(req: AskRequest):
         session_id=session_id,
         latency_ms=latency_ms,
     )
+
+    try:
+        mlflow_tracker.log_ask_run(
+            question=req.question,
+            session_id=session_id,
+            answer=response.answer,
+            sources=response.sources,
+            tool_used=response.tool_used,
+            chunk_grades=response.chunk_grades,
+            latency_ms=response.latency_ms,
+        )
+    except Exception:
+        pass  # never break the API over tracking errors
+
+    try:
+        drift_monitor.log_query(
+            question=req.question,
+            answer=response.answer,
+            latency_ms=response.latency_ms,
+            tool_used=response.tool_used,
+        )
+    except Exception:
+        pass  # never break the API over monitoring errors
+
+    try:
+        sagemaker_tracker.log_trial(
+            question=req.question,
+            answer=response.answer,
+            tool_used=response.tool_used,
+            chunk_grades=response.chunk_grades,
+            latency_ms=response.latency_ms,
+            model_name=GROQ_MODEL,
+            retrieval_top_k=TOP_K,
+        )
+    except Exception:
+        pass  # never break the API over tracking errors
+
+    return response
 
 
 # ---------------------------------------------------------------------------
