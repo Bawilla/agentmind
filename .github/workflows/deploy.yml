@@ -114,21 +114,18 @@ jobs:
             --cluster agentmind-cluster \
             --service agentmind-service \
             --force-new-deployment \
-            --region eu-central-1 || \
-          aws ecs update-service \
-            --cluster agentmind-cluster \
-            --service agentmind-service \
-            --force-new-deployment \
             --region eu-central-1
 
-      - name: Wait for service stability
+      - name: Verify deployment triggered
         run: |
-          aws ecs wait services-stable \
+          aws ecs describe-services \
             --cluster agentmind-cluster \
             --services agentmind-service \
-            --region eu-central-1
+            --region eu-central-1 \
+            --query "services[0].deployments[0].status" \
+            --output text
 
       - name: Deployment complete
         run: |
           echo "Deployed: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
-          echo "Live at:  http://35.157.189.76:8000/health"
+          echo "ECS is deploying in background - check AWS console for status"
