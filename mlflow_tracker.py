@@ -10,8 +10,6 @@ Usage:
     mlflow_tracker.log_ask_run(question, session_id, response)
 """
 
-import mlflow
-
 EXPERIMENT_NAME = "agentmind-rag"
 _initialised = False
 
@@ -20,9 +18,12 @@ def init() -> None:
     """Initialise MLflow with the agentmind-rag experiment."""
     global _initialised
     try:
+        import mlflow
         mlflow.set_experiment(EXPERIMENT_NAME)
         _initialised = True
         print(f"[MLflow] Experiment '{EXPERIMENT_NAME}' ready — runs saved to ./mlruns/")
+    except ImportError:
+        print("[MLflow] mlflow not installed — tracking disabled.")
     except Exception as exc:
         print(f"[MLflow] Warning: could not initialise — {exc}")
 
@@ -61,6 +62,7 @@ def log_ask_run(
         return  # silently skip if init() was never called
 
     try:
+        import mlflow
         with mlflow.start_run():
             # Parameters (categorical / identifier fields)
             mlflow.log_params({

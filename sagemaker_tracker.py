@@ -15,34 +15,56 @@ Usage:
     sagemaker_tracker.log_trial(question, response_dict)
 """
 
+import threading
 import uuid as _uuid
 
 # Constants imported from api.py — referenced by name to avoid circular imports
 # at module level. They are resolved at call time.
 EXPERIMENT_NAME = "agentmind-production"
 
-_initialised   = False
-_sm_available  = False
+_lock         = threading.Lock()   # guards _initialised / _sm_available writes
+_initialised  = False
+_sm_available = False
+_sm_legacy    = False              # True → smexperiments SDK (sagemaker < 2.123)
 
 
 def init() -> None:
     """Check SageMaker SDK availability and AWS credentials."""
-    global _initialised, _sm_available
-    try:
-        import boto3
-        from sagemaker.experiments.run import Run  # noqa: F401
+    global _initialised, _sm_available, _sm_legacy
 
-        # Quick credential check — will raise if no credentials are configured
-        boto3.client("sts").get_caller_identity()
+    with _lock:
+        if _initialised:            # second thread arrives after first finishes
+            return
 
-        _sm_available = True
-        print(f"[SageMaker] Experiment tracking ready — experiment='{EXPERIMENT_NAME}'")
-    except ImportError:
-        print("[SageMaker] sagemaker SDK not installed — tracking disabled.")
-    except Exception as exc:
-        print(f"[SageMaker] AWS credentials not available — tracking disabled. ({exc})")
-    finally:
-        _initialised = True
+        try:
+            import boto3
+
+            # sagemaker.experiments.run.Run arrived in sagemaker 2.123.
+            # Fall back to the standalone smexperiments package for older installs.
+            try:
+                from sagemaker.experiments.run import Run  # noqa: F401
+            except ImportError:
+                import smexperiments  # noqa: F401  — raises ImportError if absent
+                _sm_legacy = True
+
+            # Isolate credential check: missing ~/.aws or absent env vars must
+            # only disable tracking, never block API startup.
+            try:
+                boto3.client("sts").get_caller_identity()
+            except Exception as cred_exc:
+                print(f"[SageMaker] AWS credentials not available — tracking disabled. ({cred_exc})")
+                return              # _sm_available stays False
+
+            _sm_available = True
+            mode = "smexperiments (legacy)" if _sm_legacy else "sagemaker>=2.123"
+            print(f"[SageMaker] Experiment tracking ready — experiment='{EXPERIMENT_NAME}' ({mode})")
+
+        except ImportError:
+            print("[SageMaker] sagemaker SDK not installed — tracking disabled.")
+        except Exception as exc:
+            print(f"[SageMaker] Unexpected error during init — tracking disabled. ({exc})")
+        finally:
+            _initialised = True
 
 
 def log_trial(
@@ -70,28 +92,33 @@ def log_trial(
     """
     if not _initialised:
         init()
-    if not _sm_available:
+    if not _sm_available:      # confirmed correct — silent return, no raise
         return
 
     try:
-        from sagemaker.experiments.run import Run
-
-        total_chunks   = max(1, sum(chunk_grades.values()))
-        relevant       = chunk_grades.get("relevant", 0)
+        total_chunks    = max(1, sum(chunk_grades.values()))
+        relevant        = chunk_grades.get("relevant", 0)
         relevancy_score = relevant / total_chunks
+        run_name        = f"ask-{str(_uuid.uuid4())[:8]}"
 
-        run_name = f"ask-{str(_uuid.uuid4())[:8]}"
-
-        with Run(experiment_name=EXPERIMENT_NAME, run_name=run_name) as run:
-            # Parameters (static per-request configuration)
-            run.log_parameter("model_name",       model_name)
-            run.log_parameter("retrieval_top_k",  retrieval_top_k)
-            run.log_parameter("tool_used",        tool_used)
-
-            # Metrics (numeric performance indicators)
-            run.log_metric(name="latency_ms",        value=latency_ms,      step=0)
-            run.log_metric(name="chunks_retrieved",  value=total_chunks,    step=0)
-            run.log_metric(name="answer_relevancy",  value=relevancy_score, step=0)
+        if _sm_legacy:
+            # smexperiments SDK (sagemaker < 2.123): no Run context manager;
+            # parameters are stored as trial tags (best available in legacy API).
+            from smexperiments.trial import Trial
+            trial = Trial.create(experiment_name=EXPERIMENT_NAME, trial_name=run_name)
+            trial.add_tag({"Key": "model_name",      "Value": str(model_name)})
+            trial.add_tag({"Key": "retrieval_top_k", "Value": str(retrieval_top_k)})
+            trial.add_tag({"Key": "tool_used",       "Value": str(tool_used)})
+        else:
+            # sagemaker >= 2.123: full Run API with parameters and metrics
+            from sagemaker.experiments.run import Run
+            with Run(experiment_name=EXPERIMENT_NAME, run_name=run_name) as run:
+                run.log_parameter("model_name",      model_name)
+                run.log_parameter("retrieval_top_k", retrieval_top_k)
+                run.log_parameter("tool_used",       tool_used)
+                run.log_metric(name="latency_ms",       value=latency_ms,       step=0)
+                run.log_metric(name="chunks_retrieved", value=total_chunks,     step=0)
+                run.log_metric(name="answer_relevancy", value=relevancy_score,  step=0)
 
         print(f"[SageMaker] Logged trial '{run_name}' to experiment '{EXPERIMENT_NAME}'")
 

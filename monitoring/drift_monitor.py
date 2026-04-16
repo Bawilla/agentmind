@@ -82,7 +82,10 @@ def run_drift_check() -> None:
     try:
         import pandas as pd
         from evidently.report import Report
-        from evidently.metric_preset import DataDriftPreset
+        try:
+            from evidently.metric_preset import DataDriftPreset   # Evidently 0.2–0.4.x
+        except ImportError:
+            from evidently.metrics.presets import DataDriftPreset  # Evidently 0.4.x+
     except ImportError:
         print("[DriftMonitor] evidently not installed — skipping drift check.")
         return
@@ -108,12 +111,18 @@ def run_drift_check() -> None:
     print(f"[DriftMonitor] Report saved → {out_path}")
 
     # Extract drift scores and alert if any exceed threshold
-    result = report.as_dict()
-    try:
-        drift_results = result["metrics"][0]["result"]["drift_by_columns"]
+    result       = report.as_dict()
+    metrics_list = result.get("metrics", [])
+    first_result = metrics_list[0].get("result", {}) if metrics_list else {}
+    drift_results = (
+        first_result.get("drift_by_columns")    # Evidently 0.2–0.4.x
+        or first_result.get("drift", {})        # Evidently 0.4.x+ fallback
+    )
+
+    if drift_results:
         alerted = False
         for col, stats in drift_results.items():
-            score = stats.get("drift_score", 0.0)
+            score  = stats.get("drift_score", 0.0)
             status = "DRIFT" if stats.get("drift_detected", False) else "ok"
             print(f"  {col:25s}  score={score:.3f}  [{status}]")
             if score > DRIFT_THRESHOLD:
@@ -123,7 +132,7 @@ def run_drift_check() -> None:
             print(f"  Open report: {out_path}\n")
         else:
             print(f"  All features within drift threshold ({DRIFT_THRESHOLD}).\n")
-    except (KeyError, IndexError, TypeError):
+    else:
         print("[DriftMonitor] Could not parse drift scores from report.")
 
 

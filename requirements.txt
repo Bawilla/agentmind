@@ -4,7 +4,6 @@
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
 aiosignal==1.4.0
-annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0
 attrs==26.1.0
@@ -44,10 +43,12 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 kubernetes==35.0.0
 langchain==1.2.15
+langchain-chroma==0.1.4
 langchain-classic==1.0.3
 langchain-community==0.4.1
 langchain-core==1.2.26
 langchain-groq==1.1.2
+langchain-huggingface==0.1.2
 langchain-text-splitters==1.1.1
 langgraph==1.1.6
 langgraph-checkpoint==4.0.1
@@ -77,6 +78,7 @@ orjson==3.11.8
 ormsgpack==1.12.2
 overrides==7.7.0
 packaging==26.0
+pandas==2.2.2
 primp==1.2.2
 propcache==0.4.1
 protobuf==6.33.6
@@ -128,11 +130,9 @@ xxhash==3.6.0
 yarl==1.23.0
 zipp==3.23.0
 zstandard==0.25.0
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.11.0+cpu
-
 # MLOps
-mlflow
-evidently
-sagemaker
-boto3
+mlflow==2.13.2
+evidently==0.4.33
+sagemaker==2.243.0
+boto3==1.35.36
+--extra-index-url https://download.pytorch.org/whl/cpu

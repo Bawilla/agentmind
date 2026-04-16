@@ -35,8 +35,8 @@ from monitoring import drift_monitor
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -362,8 +362,14 @@ async def lifespan(app: FastAPI):
     VECTORSTORE = _load_or_build_vectorstore()
     LLM         = ChatGroq(model=GROQ_MODEL, temperature=0)
     CRAG_APP    = _build_graph()
-    mlflow_tracker.init()
-    sagemaker_tracker.init()
+    try:
+        mlflow_tracker.init()
+    except Exception as exc:
+        print(f"[Startup] mlflow_tracker.init() failed — tracking disabled. ({exc})")
+    try:
+        sagemaker_tracker.init()
+    except Exception as exc:
+        print(f"[Startup] sagemaker_tracker.init() failed — tracking disabled. ({exc})")
     print("[Startup] Ready.\n")
     yield
     print("[Shutdown] AgentMind API shutting down.")
