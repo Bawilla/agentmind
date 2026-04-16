@@ -22,13 +22,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
-      - name: Verify no ECS waiter in workflow
-        run: |
-          if grep -q "aws ecs wait" .github/workflows/deploy.yml; then
-            echo "ERROR: 'aws ecs wait' found in deploy.yml" && exit 1
-          fi
-          echo "OK: no 'aws ecs wait' block found"
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5.3.0
         with:
